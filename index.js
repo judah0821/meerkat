@@ -1,6 +1,6 @@
 const pluralize = require('pluralize');
 
-const responseSuccess = function(request, response, data) {
+const responseSuccess = function (request, response, data) {
 	const result = {
 		result: 0,
 		data,
@@ -8,7 +8,7 @@ const responseSuccess = function(request, response, data) {
 	response.json(result);
 };
 
-const responseValicationError = function(request, response, error) {
+const responseValicationError = function (request, response, error) {
 	const result = {
 		result: 1,
 		request: { url: request.url, body: request.body, headers: request.headers },
@@ -17,7 +17,7 @@ const responseValicationError = function(request, response, error) {
 	response.json(result);
 };
 
-const responseError = function(request, response, error, stack) {
+const responseError = function (request, response, error, stack) {
 	const result = {
 		result: 2,
 		stack,
@@ -27,7 +27,7 @@ const responseError = function(request, response, error, stack) {
 	response.json(result);
 };
 
-const responseAuthError = function(request, response, error, stack) {
+const responseAuthError = function (request, response, error, stack) {
 	const result = {
 		result: 3,
 		stack,
@@ -51,43 +51,24 @@ module.exports = {
 				return;
 			}
 
+			//TODO セキュリティパターン追加 user:ユーザIDをセッションから設定、group?
+			if (settings[action].security) {
+				if (!request.user) {
+					responseAuthError(request, response, 'not logged in');
+					return;
+				}
+				// eslint-disable-next-line no-param-reassign
+				settings[action].conditions.userId = request.user.userId;
+			}
+
 			/*
 			 * １件出力
 			 */
 			if (action === 'one') {
 				// console.debug(request.session); // セッションテスト(とれてない？)
 				// console.debug(request.user);
-
-				let result = null;
-				let results = null;
-				if (settings[action].security) {
-					if (!request.user) {
-						responseAuthError(request, response, 'not logged in');
-						return;
-					}
-
-					results = await MongoSchema.find({
-						userId: request.user.userId,
-						...settings[action].conditions,
-					}).sort({
-						...settings[action].order,
-					});
-				} else {
-					results = await MongoSchema.find({ ...settings[action].conditions }).sort({
-						...settings[action].order,
-					});
-				}
-
-				if (results.length === 0) {
-					responseSuccess(request, response, result);
-					return;
-				}
-				if (results.length === 1) {
-					result = results[0];
-					responseSuccess(request, response, result);
-					return;
-				}
-				responseError(request, response, 'too many results.');
+				const result = await this.one(MongoSchema, settings[action]);
+				responseSuccess(request, response, result);
 				return;
 			}
 
@@ -98,26 +79,7 @@ module.exports = {
 				// console.debug(request.session); // セッションテスト(とれてない？)
 				// console.debug(request.user);
 
-				let results = null;
-				if (settings[action].security) {
-					if (!request.user) {
-						responseAuthError(request, response, 'not logged in');
-						return;
-					}
-
-					results = await MongoSchema.find({
-						userId: request.user.userId,
-						...settings[action].conditions,
-					}).sort({
-						...settings[action].order,
-					});
-				} else {
-					results = await MongoSchema.find({ ...settings[action].conditions })
-						.sort({
-							...settings[action].order, // orderがobjectでも挿入順にならぶとのこと、無理なら二次元配列にする
-						})
-						.select({ _id: -1 }); //TODO 暫定
-				}
+				const results = this.list(MongoSchema, settings[action]);
 
 				responseSuccess(request, response, results);
 				return;
@@ -128,78 +90,13 @@ module.exports = {
 			 * test:param
 			 */
 			if (action === 'replace') {
-				// 入力チェック
-				// スキーマ名の複数形の配列であること
-				const modelName = pluralize(MongoSchema.modelName);
-				if (!request.body || !request.body[modelName] || !(request.body[modelName] instanceof Array)) {
-					responseError(request, response, `NG:error body :${modelName}`);
-					return;
-				}
-				// TODO:論理削除データの関連リソース削除
-				// TODO:論理削除データを除外
-
+				let assignData = null;
 				if (settings[action].security) {
-					if (!request.user) {
-						responseAuthError(request, response, 'not logged in');
-						return;
-					}
-
-					// データ一括チェック
-					for (const item of request.body[modelName]) {
-						// チェックデータ作成
-						const test = new MongoSchema(item);
-						test.userId = request.user.userId; // セッションから設定
-
-						const error = test.validateSync(); // save時ではキャッチできない
-						if (error) {
-							responseValicationError(request, response, error);
-							return;
-						}
-
-						// TODO:削除条件と挿入条件が一致しているかチェック
-					}
-
-					// データ削除
-					await MongoSchema.deleteMany({ userId: request.user.userId, ...settings[action].conditions }); // セッションから設定
-					// TODO:関連データを消さないといけないのでchangeFlgやコールバックを検討
-
-					// データ一括登録
-					for (const item of request.body[modelName]) {
-						// 問題集データ作成
-						const test = new MongoSchema(item);
-						test.userId = request.user.userId; // セッションから設定
-						test._id = null;
-						await test.save();
-					}
-				} else {
-					// データ一括チェック
-					for (const item of request.body[modelName]) {
-						// チェックデータ
-						const test = new MongoSchema(item);
-
-						const error = test.validateSync(); // save時ではキャッチできない
-						if (error) {
-							responseValicationError(request, response, error);
-							return;
-						}
-
-						// TODO:削除条件と挿入条件が一致しているかチェック
-					}
-
-					// データ削除
-					await MongoSchema.deleteMany({ ...settings[action].conditions });
-					// TODO:関連データを消さないといけないのでchangeFlgやコールバックを検討
-
-					// データ一括登録
-					for (const item of request.body[modelName]) {
-						// 問題集データ作成
-						const test = new MongoSchema(item);
-						test._id = null;
-						await test.save();
-					}
+					assignData = { userId: request.user };
 				}
+				const results = this.replace(MongoSchema, settings[action], request.body, assignData);
 
-				responseSuccess(request, response, null);
+				responseSuccess(request, response, results);
 				return;
 			}
 
@@ -208,51 +105,12 @@ module.exports = {
 			 * test:param
 			 */
 			if (action === 'upsert') {
-				// 入力チェック
-				const modelName = MongoSchema.modelName;
-				if (!request.body || !request.body[modelName]) {
-					responseError(request, response, `NG:error body :${modelName}`);
-					return;
-				}
-
-				const item = request.body[modelName];
-
 				if (settings[action].security) {
-					if (!request.user) {
-						responseAuthError(request, response, 'not logged in');
-						return;
-					}
-					// チェックデータ
-					const test = new MongoSchema(item);
-					test.userId = request.user.userId; // セッションから設定
-
-					const error = test.validateSync(); // save時ではキャッチできない
-					if (error) {
-						responseValicationError(request, response, error);
-						return;
-					}
-
-					// upsert
-					await MongoSchema.update({ userId: request.user.userId, ...settings[action].conditions }, item, {
-						upsert: true,
-					});
-				} else {
-					// チェックデータ
-					const test = new MongoSchema(item);
-
-					const error = test.validateSync(); // save時ではキャッチできない
-					if (error) {
-						responseValicationError(request, response, error);
-						return;
-					}
-
-					// upsert
-					await MongoSchema.update({ ...settings[action].conditions }, item, {
-						upsert: true,
-					});
+					request.body.userId = request.user.userId; // セッションから設定
 				}
+				const result = this.upsert(MongoSchema, settings[action], request.body);
 
-				responseSuccess(request, response, null);
+				responseSuccess(request, response, result);
 				return;
 			}
 		} catch (err) {
@@ -262,5 +120,103 @@ module.exports = {
 		} finally {
 			//
 		}
+	},
+	async one(MongoSchema, settings) {
+		let result = null;
+		const results = await MongoSchema.find({
+			...settings.conditions,
+		}).sort({
+			...settings.order,
+		});
+
+		if (results.length === 0) {
+			return null;
+		}
+		if (results.length === 1) {
+			result = results[0];
+			return result;
+		}
+		throw new Error('too many results.');
+	},
+	async list(MongoSchema, settings) {
+		let results = null;
+
+		results = await MongoSchema.find({
+			...settings.conditions,
+		}).sort({
+			...settings.order,
+		});
+		return results;
+	},
+	async replace(MongoSchema, settings, data, assignData) {
+		let result = null;
+
+		// 入力チェック
+		// スキーマ名の複数形の配列であること
+		const modelName = pluralize(MongoSchema.modelName);
+		if (!data || !data[modelName] || !(data[modelName] instanceof Array)) {
+			throw new Error(`NG:error body :${modelName}`);
+		}
+		// TODO:論理削除データの関連リソース削除
+		// TODO:論理削除データを除外
+
+		// データ一括チェック
+		for (const item of data[modelName]) {
+			// チェックデータ作成
+			if (assignData) {
+				Object.assign(item, assignData);
+			}
+			const test = new MongoSchema(item);
+
+			const error = test.validateSync(); // save時ではキャッチできない
+			if (error) {
+				throw new Error(error);
+			}
+
+			// TODO:削除条件と挿入条件が一致しているかチェック
+		}
+
+		// データ削除
+		await MongoSchema.deleteMany({ ...settings.conditions }); // セッションから設定
+		// TODO:関連データを消さないといけないのでchangeFlgやコールバックを検討
+
+		// データ一括登録
+		result = {}; //TODO 後で追加
+		for (const item of data[modelName]) {
+			// 問題集データ作成
+			if (assignData) {
+				Object.assign(item, assignData);
+			}
+			const test = new MongoSchema(item);
+			test._id = null;
+			await test.save();
+		}
+
+		return result;
+	},
+	async upsert(MongoSchema, settings, data) {
+		let result = null;
+		// 入力チェック
+		const modelName = MongoSchema.modelName;
+		if (!data || !data[modelName]) {
+			throw new Error(`NG:error body :${modelName}`);
+		}
+
+		const item = data[modelName];
+
+		// チェックデータ
+		const test = new MongoSchema(item);
+
+		const error = test.validateSync(); // save時ではキャッチできない
+		if (error) {
+			throw new Error(error);
+		}
+
+		// upsert
+		result = await MongoSchema.update({ ...settings.conditions }, item, {
+			upsert: true,
+		});
+
+		return result;
 	},
 };
