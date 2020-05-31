@@ -1,0 +1,19 @@
+{
+  "name": "meerkat",
+  "version": "0.0.1",
+  "description": "mongoose wrapper",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/judah0821/meerkat.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/judah0821/meerkat/issues"
+  },
+  "homepage": "https://github.com/judah0821/meerkat#readme"
+}
