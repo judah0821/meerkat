@@ -1,5 +1,7 @@
 /* eslint-env mocha */
 const assert = require('assert');
+const meerkat = require('../index');
+const models = require('./model/models.js');
 
 describe('test1', () => {
 	describe('seq 1', () => {
